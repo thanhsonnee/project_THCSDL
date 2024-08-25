@@ -1,0 +1,257 @@
+DROP DATABASE library_db_v2;
+CREATE DATABASE library_db_v2;
+\c library_db_v2
+
+-- TABLE DEFINITION
+-- account(email, password, created_date, status)
+-- student(student_id, first_name, last_name, dob, gender, email, phone_number) 
+-- librarian(librarian_id, first_name, last_name, dob, gender, email, phone_number) 
+-- self-study & reading room(room_id, room_number, current_attendant, max_capacity, status)
+-- archive room(room_id, room_number)
+-- book(book_id, name, author, publisher, origin, published_year, category, room_id, stock_in_date, stock_out_date, quantity)
+-- order(order_id, student_id, order_time, deadline, expiration_date, extension, status, book_return_date, method, violation)
+-- order_book(order_id, book_id, quantity)
+-- search(student_id, book_id)
+-- check_in(student_id, check_in, check_out, room_id)
+-- timeshift(timeshift_id, time_start, time_end)
+-- schedule(timeshift_id, date, librarian_id, room_id)
+-- special_events(name, organiser, sponsor, description, destination, target_participant, schedule)
+
+
+---------------------------------------------------------------
+-- account(email, password, created_date, status)
+CREATE TABLE account (
+    	email VARCHAR (50) NOT NULL,
+    	password VARCHAR (50) NOT NULL, 
+    	created_date DATE NOT NULL,
+    	status VARCHAR (20) NULL, 
+-- Khóa chính: email
+	CONSTRAINT account_pk PRIMARY KEY (email),
+-- Email phải chứa đuôi "@sis.hust.edu.vn"
+	CONSTRAINT account_chk_email CHECK (email LIKE '%@sis.hust.edu.vn'),
+-- Các trạng thái của tài khoản: 
+-- active: đang hoạt động; 
+-- warning lv: các mức cảnh báo khi xảy ra vi phạm;
+-- suspended: khóa tài khoản nếu quá 3 lần vi phạm.
+-- Khi book_return_date vi phạm thì ngay lập tức status sẽ nhảy sang warning dựa vào số lần violation = X: dùng trigger
+	CONSTRAINT account_chk_status CHECK (status IN ('Active', 'Warning lv1', 'Warning lv2', 'Warning lv3', 'Suspended'))	
+);
+
+
+-- student(student_id, first_name, last_name, dob, email, phone_number) 
+CREATE TABLE student (
+	student_id CHAR(8) NOT NULL,
+	first_name VARCHAR(20) NOT NULL,
+	last_name VARCHAR(20) NOT NULL,
+	dob DATE NOT NULL,
+	gender CHAR(1) NULL,
+	email VARCHAR (50) NOT NULL,
+	phone_number CHAR (10) NOT NULL,
+-- Khóa chính: student_id
+	CONSTRAINT student_pk PRIMARY KEY (student_id),
+-- Khóa ngoài: account.email
+	CONSTRAINT student_fk_account FOREIGN KEY (email) REFERENCES account(email),
+-- Email phải có đuôi @sis.hust.edu.vn
+	CONSTRAINT student_chk_email CHECK (email LIKE '%@sis.hust.edu.vn'),
+-- Sđt phải bắt đầu bằng 0
+	CONSTRAINT student_chk_phone CHECK (phone_number LIKE '0%'),
+-- Sinh viên phải nằm trong độ tuổi từ 18 đến 24
+	CONSTRAINT student_chk_age CHECK( (DATE_PART('year', current_date) - DATE_PART('year', dob)) BETWEEN 18 AND 24),
+-- Qui ước F và M cho giới tính
+	CONSTRAINT student_chk_gender CHECK (gender = 'F' OR gender = 'M')
+);
+
+
+-- libarian(libarian_id, first_name, last_name, dob, email, phone_number) 
+CREATE TABLE librarian (
+    	librarian_id CHAR (6) NOT NULL, 
+    	first_name VARCHAR (20) NOT NULL, 
+    	last_name VARCHAR (20) NOT NULL,
+	dob DATE NOT NULL,
+	gender CHAR(1) NULL,
+    	email VARCHAR (50) NOT NULL,
+   	phone_number CHAR (10) NOT NULL, 
+-- Khóa chính: librarian_id
+	CONSTRAINT librarian_pk PRIMARY KEY(librarian_id),
+-- Khóa ngoài: account.email
+	CONSTRAINT librarian_fk_account FOREIGN KEY (email) REFERENCES account(email),
+-- Email phải có đuôi @sis.hust.edu.vn
+	CONSTRAINT librarian_chk_email CHECK (email LIKE '%@sis.hust.edu.vn'),
+-- Sđt phải bắt đầu bằng 0
+	CONSTRAINT librarian_chk_phone CHECK (phone_number LIKE '0%'),
+-- Thủ thư phải lớn hơn 18 tuổi
+	CONSTRAINT librarian_chk_age CHECK( (DATE_PART('year', current_date) - DATE_PART('year', dob)) BETWEEN 18 AND 100),
+	CONSTRAINT librarian_chk_gender CHECK (gender = 'F' OR gender = 'M')
+); 
+
+
+-- self-study & reading room(room_id, room_number, current_attendant, max_capacity)
+CREATE TABLE self_study_and_reading_room (
+    	room_id CHAR(6) NOT NULL, 
+    	room_number CHAR(3) NOT NULL, 
+    	current_attendant INTEGER NULL,
+	max_capacity INTEGER NULL,
+	status VARCHAR(20) NULL,
+-- Khóa chính: room_id
+	CONSTRAINT ssrroom_pk PRIMARY KEY (room_id),
+-- ID của phòng tự học- đọc bắt buộc phải bắt đầu bằng SSR
+	CONSTRAINT ssrroom_chk_id CHECK (room_id LIKE 'SSR%')
+);
+
+
+-- archive room(room_id, room_number)
+CREATE TABLE archive_room (
+    	room_id CHAR(6) NOT NULL, 
+    	room_number CHAR(3) NOT NULL, 
+-- Khóa chính: room_id
+	CONSTRAINT acvroom_pk PRIMARY KEY (room_id),
+-- ID của phòng lưu trữ bắt buộc phải bắt đầu bằng ACV
+	CONSTRAINT acvroom_chk_id CHECK (room_id LIKE 'ACV%')
+);
+
+
+-- book(book_id, name, author, publisher, origin, published_year, category, room_id, stock_in_date, stock_out_date, quantity)
+-- Các sách sắp được nhập về cũng sẽ được lưu thông tin vào đây
+CREATE TABLE book (
+	book_id CHAR(6) NOT NULL,
+	name VARCHAR(50) NOT NULL,
+	author VARCHAR(30) NOT NULL,
+	publisher VARCHAR(20) NOT NULL,
+	origin VARCHAR(15) NOT NULL,
+	published_year DATE NULL,
+	category VARCHAR(200) NOT NULL,
+	room_id CHAR(8) NOT NULL,
+	stock_in_date DATE NOT NULL,
+	stock_out_date DATE NULL,
+	quantity INTEGER NOT NULL,
+-- Khóa chính: book_id
+	CONSTRAINT book_pk PRIMARY KEY (book_id)
+-- Khóa ngoài: room_id
+	CONSTRAINT book_fk_room FOREIGN KEY (room_id) REFERENCES archive_room(room_id),
+);		
+
+
+
+-- order(student_id, order_id, order_time, deadline, expiration_date, extension, status, book_return_date, method)
+CREATE TABLE order (
+	order_id CHAR(5) NOT NULL,
+    	student_id CHAR(8) NOT NULL, 
+	order_time TIMESTAMP NOT NULL,
+	expiration_date DATE NULL,
+	deadline DATE NULL,
+	extension CHAR(1) NULL,
+	status VARCHAR(15) NOT NULL,
+	book_return_date DATE NULL,
+	method VARCHAR(10) NOT NULL,
+	violation CHAR(1) NULL,
+-- Khóa chính: order_id
+	CONSTRAINT order_pk PRIMARY KEY (order_id),
+-- Khóa ngoài: student_id
+	CONSTRAINT order_fk_student FOREIGN KEY (student_id) REFERENCES student(student_id),
+-- Ngày order hết hạn = ngày tạo đơn + 3: dùng trigger
+-- deadline = ngày nhận đơn + 7: dùng trigger, khi đơn chuyển sang accepted thì order_time tự nhảy về thời điểm nhận đơn -> expiration date = null
+-- Qui ước cho extension: Y hoặc N, khi Y thì deadline tự động + 7,
+	CONSTRAINT order_chk_extension CHECK (extension = 'Y' OR extension = 'N'),
+-- Trạng thái đơn:
+-- In queue: đang chờ xác nhận
+-- Accepted: nếu trong vòng 8 tiếng mà đơn ko bị hủy thì sẽ chuyển sang đã nhận
+-- Cancelled: hủy đơn
+-- Successful: sau khi ng làm đơn đã đến nhận sách thì đơn sẽ chuyển sang trạng thái thành công
+-- Returned: sau khi trả sách đúng thời hạn
+	CONSTRAINT order_chk_status CHECK (status IN ('In queue', 'Accepted', 'Cancelled', 'Successful', 'Returned')),
+-- Khi book_return_date quá deadline -> trạng thái của account tự động cập nhật theo số lần vi phạm 
+-- Hai phương pháp đặt order: online hoặc offline
+	CONSTRAINT order_chk_method CHECK (method = 'Online' OR method = 'Offline')
+-- Khi xảy ra vi phạm, cột violation sẽ được cập nhật: X -> vi phạm, O -> ko vi phạm
+);
+
+
+-- order_book(order_id, book_id, student_id, quantity)
+CREATE TABLE order_book (
+    	order_id CHAR (5) NOT NULL, 
+    	book_id CHAR (6) NOT NULL, 
+    	quantity INTEGER NOT NULL, 
+-- Khóa ngoài: order_id
+	CONSTRAINT order_fk FOREIGN KEY (order_id) REFERENCES order(order_id),
+-- Khóa ngoài: book.book_id
+	CONSTRAINT order_fk_book FOREIGN KEY (book_id) REFERENCES book(book_id)
+); 
+
+
+-- search(student_id, book_id)
+CREATE TABLE search (
+	student_id CHAR(8) NOT NULL,
+	book_id CHAR(6) NOT NULL,
+-- Khóa ngoài: student_id
+	CONSTRAINT search_fk_student FOREIGN KEY (student_id) REFERENCES student(student_id),
+-- Khóa ngoài: book_id
+	CONSTRAINT search_fk_book FOREIGN KEY (book_id) REFERENCES book(book_id)
+);
+
+
+-- check_in(student_id, room_id, check_in, check_out)
+CREATE TABLE Check_in (
+	student_id CHAR(8) NOT NULL,
+	room_id CHAR(6) NOT NULL,
+	check_in TIMESTAMP,
+	check_out TIMESTAMP,
+-- Khóa ngoài: room_id
+	CONSTRAINT checkin_fk_room FOREIGN KEY (room_id) REFERENCES self_study_and_reading_room(room_id),
+-- Khóa ngoài: student_id
+	CONSTRAINT checkin_fk_student FOREIGN KEY (student_id) REFERENCES student(student_id)
+);
+
+
+-- timeshift(timeshift_id, time_start, time_end)
+CREATE TABLE timeshift (
+	timeshift_id VARCHAR(6) NOT NULL,
+	time_start TIME WITHOUT TIME ZONE NOT NULL,
+	time_end TIME WITHOUT TIME ZONE NOT NULL,
+	CONSTRAINT timeshift_pk PRIMARY KEY (timeshift_id)
+);
+
+
+-- schedule(timeshift, date, librarian_id, room_id)
+CREATE TABLE schedule (
+    	timeshift_id VARCHAR(6) NOT NULL, 
+    	date DATE NOT NULL, 
+    	librarian_id CHAR(6) NULL, 
+    	room_id CHAR(6) NULL, 
+-- Khóa ngoài: timeshift_id
+	CONSTRAINT schedule_fk_timeshift FOREIGN KEY (timeshift_id) REFERENCES timeshift(timeshift_id),
+-- Khóa ngoài: room_id
+	CONSTRAINT schedule_fk_room FOREIGN KEY (room_id) REFERENCES self_study_and_reading_room(room_id),
+-- Khóa ngoài: librarian_id
+	CONSTRAINT schedule_fk_librarian FOREIGN KEY (librarian_id) REFERENCES librarian(librarian_id)
+); 
+
+
+-- special_event(name, organiser, sponsor, description, destination, target_participant, date, schedule)
+CREATE TABLE special_event (
+	name VARCHAR(200) NOT NULL,
+	organiser VARCHAR(200) NULL,
+	sponsor VARCHAR(200) NULL,
+	description TEXT NULL,
+	destination VARCHAR(50) NULL,
+	target_participant VARCHAR(50) NULL,
+	date DATE NULL,
+	schedule TIME NULL,
+-- Khóa chính: name do tên các sự kiện luôn khác nhau
+	CONSTRAINT event_pk PRIMARY KEY (name)
+);
+
+
+-- Kích thước các bảng
+-- account: 30
+-- student: 20
+-- librarian: 10
+-- ssr: 5
+-- acv: 5
+-- book: 100
+-- order: 50
+-- order_book: 120
+-- search: 50
+-- check_in 30
+-- timeshift: 4 kíp
+-- schedule 30
+-- event: 20

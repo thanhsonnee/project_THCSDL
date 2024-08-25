@@ -1,0 +1,482 @@
+-- Chu Đình Hà - 20225712
+--1. Hiển thị số lượt vào của các phòng từ ngày 23/05/2024 - 30/05/2024
+
+SELECT COUNT(student_id), room_id
+FROM check_in
+GROUP BY room_id, check_in
+HAVING DATE(check_in) BETWEEN '05-23-2024' AND '05-30-2024';
+
+
+--2. Hiển thị danh sách các sách có số lần được mượn ít nhất trong tháng 4/2024(tối đa 10)
+
+SELECT b.*, COUNT(book_id), order_time
+FROM orders o JOIN book b USING(book_id)
+	JOIN orderline ol USING(order_id)
+GROUP BY b.book_id, ol.order_time
+HAVING EXTRACT(MONTH FROM(order_time)) = 4
+ORDER BY count(o.book_id) ASC
+LIMIT 10;
+
+
+--3. Tạo view hiển thị lịch sử mượn sách của sinh viên có email là kristie61@sis.hust.edu.vn
+
+CREATE OR REPLACE VIEW kristie61_order_history AS
+SELECT ol.order_id, o.book_id, b.name, quantity, order_time
+FROM orderline ol JOIN orders o USING(order_id)
+		JOIN student USING(student_id)
+		JOIN book b USING(book_id)
+WHERE email = 'kristie61@sis.hust.edu.vn';
+
+
+--4. Tạo trigger chỉ cho phép đơn online mới có trạng thái 'In queue'
+CREATE OR REPLACE FUNCTION func_orderline_status()
+RETURNS TRIGGER AS
+$$
+DECLARE
+	method varchar(10);
+	stat varchar(15);
+BEGIN
+	SELECT NEW.method, NEW.status INTO method, stat
+	FROM orderline;
+	IF(method = 'Offline' AND stat = 'In queue') 
+	THEN 
+		RAISE NOTICE 'Cannot insert';
+		RETURN NULL;
+	END IF;
+	RETURN NEW;
+END;
+$$
+LANGUAGE plpgsql;
+
+CREATE OR REPLACE TRIGGER trig_order_status_insert
+BEFORE INSERT ON orderline
+FOR EACH ROW
+EXECUTE PROCEDURE func_orderline_status();
+
+
+--5. Hiển thị danh sách đơn mượn mà có ít nhất 1 đầu sách có số lượng lớn hơn 5(tối đa 10)
+
+SELECT ol.order_id, o.book_id, ol.student_id, o.quantity
+FROM orderline ol JOIN orders o USING(order_id)
+WHERE o.quantity > 5
+LIMIT 10;
+
+
+--6. Hiển thị danh sách các đầu sách có số lượng trong kho lớn nhất
+
+SELECT b.book_id, b.name, a.stock
+FROM book b JOIN archiving a USING(book_id)
+GROUP BY b.book_id, a.stock
+ORDER BY a.stock DESC;
+
+
+--7. Tạo trigger tính số lượng sách trong kho mỗi khi có đơn được cập nhật
+CREATE OR REPLACE FUNCTION func_order_quantity()
+RETURNS TRIGGER AS
+$$
+DECLARE
+	x int4;
+	y varchar(15);
+	bookid char(6);
+	orderid char(5);
+BEGIN	
+	FOR orderid IN
+		SELECT order_id FROM orderline
+	LOOP
+		SELECT status INTO y
+		FROM orderline
+		WHERE order_id = orderid;
+
+		SELECT book_id, quantity INTO bookid,  x
+		FROM orders
+		WHERE order_id = orderid;
+		
+		IF(y = 'Accepted') THEN 
+		UPDATE archiving SET In_order = In_order + x, Available = Available - x
+		WHERE book_id = bookid;
+		ELSEIF(y = 'Cancelled') THEN
+		UPDATE archiving SET In_order = In_order - x, Available = Available + x
+		WHERE book_id = bookid;
+		ELSEIF(y = 'Successful') THEN
+		UPDATE archiving SET Away = Away + x, In_order = In_order - x
+		WHERE book_id = bookid;
+		ELSEIF(y = 'Returned') THEN
+		UPDATE archiving SET Away = Away - x, Available = Available + x
+		WHERE book_id = bookid;
+		
+		END IF;
+	END LOOP;
+	RAISE NOTICE 'Update successful';	
+	RETURN NEW;
+END;
+$$
+LANGUAGE plpgsql;
+
+CREATE OR REPLACE TRIGGER trig_order_quantity
+AFTER UPDATE OF status OR INSERT ON orderline
+FOR EACH ROW
+EXECUTE PROCEDURE func_order_quantity();
+
+--8. Hiển thị danh sách sinh viên ra khỏi phòng 173 sau 18h ngày 18/04/2024
+
+
+SELECT s.student_id, s.first_name, s.last_name, check_out
+FROM check_in JOIN student s USING(student_id)
+		JOIN self_study_and_reading_room USING(room_id)
+WHERE room_number = '173' AND check_out > '2024-04-18 18:00:00';
+
+
+--9. In ra tổng số lượng sách được mượn trong 3 tháng đầu năm 2024
+
+SELECT SUM(quantity)
+FROM orderline JOIN orders USING(order_id)
+WHERE DATE(order_time) BETWEEN '01-01-2024' AND '03-31-2024';
+
+ 
+--10. Hiển thị danh sách 10 sinh viên có số lượng đơn mượn nhiều nhất theo từng tháng (kèm theo số lượng sách đã mượn sắp xếp theo thứ tự giảm dần) trong 6 tháng đầu năm 2024
+
+SELECT s.student_id, s.first_name, s.last_name, COUNT(ol.order_id), SUM(quantity)
+FROM orderline ol JOIN orders o USING(order_id)
+		RIGHT JOIN student s USING(student_id)
+GROUP BY s.student_id, order_time
+HAVING DATE(order_time) BETWEEN '01-01-2024' AND '06-30-2024'
+ORDER BY COUNT(ol.order_id) DESC, SUM(quantity) DESC
+LIMIT 10;
+
+
+-- Đỗ Thanh Sơn - 20225665
+--1. Liệt kê các đầu sách có số lượng > 5 quyển, nhưng không có ai mượn 
+
+select book_id, name, author, category from book 
+join stock st using (book_id) 
+join orders ord using (book_id) 
+where st.quantity > 5 and ord.quantity = 0
+group by (book_id); 
+
+
+--2. Đưa ra danh sách 10 đầu sách được mượn nhiều nhất trong 6 tháng vừa rồi 
+
+select bk.book_id, bk.name, count(bk.book_id) as so_sach 
+from book bk
+join orders ord ON (bk.book_id = ord.book_id) 
+join orderline ol ON (ord.order_id = ol.order_id)
+where ol.order_time >= (CURRENT_DATE - INTERVAL '6 month') 
+group by(bk.book_id)
+ORDER BY so_sach DESC
+LIMIT 10; 
+
+
+--3. In ra các tài khoản email đã bị cấm do vi phạm quy tắc 
+
+select email from student 
+join account acc using (email) 
+where acc.status = 'Suspended'; 
+
+
+
+--4.Tạo trigger cập nhật số lượng sinh viên đang ở trong phòng nếu có sinh viên ra/vào
+CREATE OR REPLACE FUNCTION func_room_checkin_out()
+RETURNS TRIGGER AS
+$$
+BEGIN
+	IF(tg_op = 'INSERT') THEN
+		UPDATE self_study_and_reading_room 
+		SET current_attendant = current_attendant + 1
+		WHERE room_id = NEW.room_id; 
+	ELSEIF(tg_op = 'UPDATE') THEN
+		UPDATE self_study_and_reading_room 
+		SET current_attendant = current_attendant - 1
+		WHERE room_id = NEW.room_id; 
+	END IF;
+	RAISE NOTICE 'Update successful';
+	RETURN NEW;
+END;
+$$
+LANGUAGE plpgsql;
+
+CREATE OR REPLACE TRIGGER trig_checkin_out
+AFTER UPDATE OF check_out OR INSERT ON check_in
+FOR EACH ROW
+EXECUTE PROCEDURE func_room_checkin_out();
+
+
+--5. Liệt kê tất cả các đầu sách mà thủ thư cho mượn trong 3 tháng vừa qua và đã trả lại đúng thời hạn
+
+select *
+from orders ord
+join orderline ol using (order_id)
+where book_return_date BETWEEN (CURRENT_DATE - INTERVAL '3 months') and CURRENT_DATE
+and book_return_date <= deadline;
+
+
+--Phân tích: nếu đề bài chỉ yêu cầu các đầu sách đã trả lại, thì có thể thay book_return_date <= deadline bằng câu lệnh status = 'Returned' là được, sẽ tối ưu query hơn 
+
+--6. Tạo hàm để tính số lượng sinh viên hiện tại đang ở trong phòng
+CREATE OR REPLACE FUNCTION func_room_current_attendant()
+RETURNS VOID AS
+$$
+DECLARE
+	x int4;
+	y char(6);
+BEGIN
+	FOR y IN
+		SELECT room_id FROM self_study_and_reading_room
+	LOOP
+		SELECT COUNT(student_id) INTO x
+		FROM self_study_and_reading_room
+		WHERE room_id = y AND check_out is NULL;
+
+		UPDATE self_study_and_reading_room
+		SET current_attendant =  x
+		WHERE room_id = y;
+	END LOOP;
+	RAISE NOTICE 'Update successful';
+	RETURN NEW;
+END;
+$$
+LANGUAGE plpgsql;
+
+
+
+--7. Đưa ra thông tin về các sự kiện đã tổ chức trong ngày hội sách Việt Nam hàng năm (21/4) từ năm 2010 và những người tham gia, các nhà tài trợ cho các sự kiện đó 
+
+select * from special_event 
+where date >= '2010-04-21'; 
+
+
+--8. Đưa ra danh sách 5 tác giả có nhiều đầu sách nhất trong thư viện 
+
+select count(distinct bk.book_id) as so_sach, bk.author from book bk 
+join stock st ON bk.book_id = st.book_id 
+group by (author) 
+order by so_sach DESC
+LIMIT 5;
+
+
+9. Đưa ra 7 thể loại sách ít nhất trong thư viện 
+select count(category) as so_theloai, bk.book_id 
+from book bk 
+join stock st ON bk.book_id = st.book_id 
+group by (bk.book_id) 
+order by so_theloai ASC
+Limit 7; 
+
+--10. Đưa ra danh sách các thủ thư làm việc trong khung giờ từ 8h-13h hàng ngày
+
+select * 
+from librarian	
+join schedule using (librarian_id) 
+where timeshift between '08:00:00' and '13:00:00'; 
+
+
+-- Đỗ Văn Vũ
+--1:  Lấy danh sách tất cả các đơn đặt hàng đã quá hạn trả sách 
+------và chi tiết sinh viên thực hiện đơn
+SELECT 
+    o.order_id,
+    o.book_id,
+    s.first_name,
+    s.last_name,
+    ol.deadline,
+    ol.book_return_date
+FROM 
+    orders o
+JOIN 
+    orderline ol ON o.order_id = ol.orderline_id
+JOIN 
+    student s ON ol.student_id = s.student_id
+WHERE 
+    ol.book_return_date > ol.deadline;
+
+
+--2:  Lấy thông tin các sự kiện đặc biệt và các thủ thư đang làm việc trong khoảng thời gian đó
+SELECT 
+    se.name AS event_name,
+    se.organiser,
+    se.sponsor,
+    se.description,
+    se.destination,
+    se.target_participant,
+    se.date,
+    se.schedule,
+    l.first_name AS librarian_first_name,
+    l.last_name AS librarian_last_name
+FROM 
+    special_event se
+LEFT JOIN 
+    schedule s ON se.schedule = s.timeshift AND se.date = s.date
+LEFT JOIN 
+    librarian l ON s.librarian_id = l.librarian_id;
+
+--3: Truy vấn tìm các thủ thư có lịch làm việc trong phòng tự học và đọc sách vào một ngày cụ thể
+
+SELECT 
+    l.librarian_id,
+    l.first_name,
+    l.last_name,
+    s.room_id,
+    ssr.room_number,
+    s.date,
+    s.timeshift
+FROM 
+    librarian l
+JOIN 
+    schedule s ON l.librarian_id = s.librarian_id
+JOIN 
+    self_study_and_reading_room ssr ON s.room_id = ssr.room_id
+WHERE 
+    s.date = '2023-12-15';
+
+-- 4:  Truy vấn danh sách các phòng tự học và đọc sách có số lượng người hiện tại vượt quá sức chứa tối đa, cùng với chi tiết thủ thư phụ trách
+
+SELECT 
+    ssr.room_id,
+    ssr.room_number,
+    ssr.current_attendant,
+    ssr.max_capacity,
+    l.librarian_id,
+    l.first_name,
+    l.last_name
+FROM 
+    self_study_and_reading_room ssr
+JOIN 
+    schedule s ON ssr.room_id = s.room_id
+JOIN 
+    librarian l ON s.librarian_id = l.librarian_id
+WHERE 
+    ssr.current_attendant > ssr.max_capacity;
+
+--5:  Truy vấn danh sách các sinh viên có đơn đặt hàng bị hủy nhiều nhất và số lượng đơn hàng bị hủy
+
+SELECT 
+    s.student_id,
+    s.first_name,
+    s.last_name,
+    COUNT(ol.orderline_id) AS cancelled_orders
+FROM 
+    student s
+JOIN 
+    orderline ol ON s.student_id = ol.student_id
+WHERE 
+    ol.status = 'Cancelled'
+GROUP BY 
+    s.student_id, s.first_name, s.last_name
+ORDER BY 
+    cancelled_orders DESC;
+
+
+--6. Tạo trigger khi mà một đơn được tạo thì ngày hết hạn sẽ được tự động tính
+CREATE OR REPLACE FUNCTION func_order_date()
+RETURNS TRIGGER AS
+$$
+DECLARE
+BEGIN
+	UPDATE orderline SET expiration_date = DATE(order_time) + 3
+	WHERE order_id = NEW.order_id;
+	RAISE NOTICE 'Update successful';
+	RETURN NEW;
+END;
+$$
+LANGUAGE plpgsql;
+
+CREATE OR REPLACE TRIGGER trig_order_date_insert
+AFTER INSERT ON orderline 
+FOR EACH ROW
+EXECUTE PROCEDURE func_order_date();
+
+
+--7: Truy vấn thông tin về các sách được xuất kho trong khoảng thời gian nhất định và chi tiết đơn đặt hàng liên quan
+SELECT 
+    b.book_id,
+    b.name,
+    s.stock_out_date,
+    o.order_id,
+    ol.order_time,
+    ol.status
+FROM 
+    book b
+JOIN 
+    stock s ON b.book_id = s.book_id
+JOIN 
+    orders o ON b.book_id = o.book_id
+JOIN 
+    orderline ol ON o.order_id = ol.orderline_id
+WHERE 
+    s.stock_out_date BETWEEN '2023-01-01' AND '2023-12-31';
+
+--8: tính tổng thời gian trong thư viện của một sinh viên trong năm 2023
+SELECT 
+    s.student_id,
+    s.first_name,
+    s.last_name,
+    ROUND(SUM(EXTRACT(EPOCH FROM (ci.check_out - ci.check_in)) / 3600), 2) AS total_hours_in_self_study_room
+FROM 
+    student s
+JOIN 
+    check_in ci ON s.student_id = ci.student_id
+JOIN 
+    self_study_and_reading_room ssr ON ci.room_id = ssr.room_id
+WHERE 
+    ci.check_in BETWEEN '2023-01-01' AND '2023-12-31'
+GROUP BY 
+    s.student_id, s.first_name, s.last_name; 
+
+--9: 
+--tạo index
+CREATE INDEX idx_archiving_room_id ON archiving(room_id);
+CREATE INDEX idx_archiving_book_id ON archiving(book_id);
+CREATE INDEX idx_archive_room_room_id ON archive_room(room_id);
+EXPLAIN ANALYZE
+SELECT 
+    ar.room_id,
+    ar.room_number,
+    b.book_id,
+    b.name,
+    SUM(a.available) AS total_available_books
+FROM 
+    archive_room ar
+JOIN 
+    archiving a ON ar.room_id = a.room_id
+JOIN 
+    book b ON a.book_id = b.book_id
+GROUP BY 
+    ar.room_id, ar.room_number, b.book_id, b.name;
+
+10. Tạo hàm giúp hệ thống đưa ra nhận xét dựa vào số lượng người trong phòng tự học
+
+CREATE OR REPLACE FUNCTION func_room_status()
+RETURNS VOID AS
+$$
+DECLARE
+	x varchar(20);
+	y int4;
+	z int4;
+	room char(6);
+BEGIN
+	FOR room IN 
+		(SELECT room_id FROM self_study_and_reading_room)
+	LOOP
+		SELECT current_attendant, max_capacity INTO y, z
+		FROM self_study_and_reading_room
+		WHERE room_id = room;
+
+		IF(y > z) 
+		THEN x := 'Overly crowded';
+		ELSEIF(y >= (z*3/4))
+		THEN x := 'Crowded';
+		ELSEIF(y >= (z*3/5))
+		THEN x := 'Fairly occupied';
+		ELSEIF(y >= (z*2/5))
+		THEN x := 'Barely occupied';
+		ELSEIF(y >= (z*1/5))
+		THEN x := 'Fairly empty';
+		ELSE x := 'Deserted';
+		END IF;
+
+		UPDATE self_study_and_reading_room SET status = x
+		WHERE room_id = room;
+	END LOOP;
+	RAISE NOTICE 'Update successful';
+END;
+$$
+LANGUAGE plpgsql; 
